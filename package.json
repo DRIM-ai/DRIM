@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@visactor/vchart": "^1.13.10",
+    "@visactor/vmind": "^2.0.6",
+    "canvas": "^3.1.0"
+  }
+}
