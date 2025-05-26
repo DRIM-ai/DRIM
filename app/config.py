@@ -58,7 +58,7 @@ class BrowserSettings(BaseModel):
     wss_url: Optional[str] = Field(None, description="Connect to a browser instance via WebSocket")
     cdp_url: Optional[str] = Field(None, description="Connect to a browser instance via CDP")
     proxy: Optional[ProxySettings] = Field(None, description="Proxy settings for the browser")
-    max_content_length: int = Field(20000, description="Maximum length for content retrieval operations")
+    max_content_length: int = Field(150000, description="Maximum length for content retrieval operations")
 
 class SandboxSettings(BaseModel):
     use_sandbox: bool = Field(False, description="Whether to use the sandbox")

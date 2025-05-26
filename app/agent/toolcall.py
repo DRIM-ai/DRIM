@@ -22,7 +22,7 @@ TOOL_CALL_REQUIRED_ERROR_MSG = "Tool calls required by agent logic but none were
 class ToolCallAgent(ReActAgent):
     name: str = Field(default="drim_toolcall_agent")
     description: str = Field(default="A DRIM AI agent that can execute tool calls using an LLM.")
-    
+
     system_prompt: str = Field(default=TOOLCALL_SYSTEM_PROMPT)
     next_step_prompt: str = Field(default=TOOLCALL_NEXT_STEP_PROMPT_TEMPLATE)
 
@@ -33,10 +33,10 @@ class ToolCallAgent(ReActAgent):
     special_tool_names: List[str] = Field(
         default_factory=lambda: [Terminate().name]
     )
-    
+
     current_tool_calls_internal: List[ToolCall] = Field(default_factory=list, exclude=True)
     current_base64_image_internal: Optional[str] = Field(default=None, exclude=True)
-    
+
     max_steps: int = Field(default=15)
     max_observe: Optional[int] = Field(default=10000, description="Max characters of tool observation to keep.")
 
@@ -47,7 +47,7 @@ class ToolCallAgent(ReActAgent):
         self.current_tool_calls_internal = []
 
         current_messages = self.memory.messages.copy()
-        
+
         if self.next_step_prompt:
             current_prompt_message = Message.user_message(
                 self.next_step_prompt,
@@ -60,7 +60,7 @@ class ToolCallAgent(ReActAgent):
 
         system_message_content = self.system_prompt
         system_messages_for_llm = [Message.system_message(system_message_content)] if system_message_content else None
-        
+
         llm_response_message_from_api: Optional[Message] = None
         try:
             model_to_use_purpose = self.default_llm_purpose
@@ -103,58 +103,74 @@ class ToolCallAgent(ReActAgent):
                 logger.debug(f"Agent '{self.name}' had no direct tool calls, checking thought content for JSON: {llm_textual_thought[:200]}...")
                 try:
                     json_to_parse = llm_textual_thought
+                    # Regex to find ```json ... ``` block or just { ... }
                     json_block_match = re.search(r"```json\s*(\{.*?\})\s*```", llm_textual_thought, re.DOTALL)
                     if json_block_match:
                         json_to_parse = json_block_match.group(1)
+                    # If no markdown block, check if the whole thought is a JSON object (starts with { ends with })
+                    elif not json_to_parse.strip().startswith("{") or not json_to_parse.strip().endswith("}"):
+                         # If not a clear JSON block, do not attempt to parse as JSON to avoid errors on plain text thoughts.
+                         pass # Keep llm_textual_thought as is, no JSON actions to parse from it.
                     
-                    parsed_llm_json_output = json.loads(json_to_parse)
-                    llm_textual_thought = parsed_llm_json_output.get("thought", llm_textual_thought)
-                    actions_list = parsed_llm_json_output.get("tool_calls", parsed_llm_json_output.get("actions", []))
+                    if json_to_parse.strip().startswith("{"): # Only parse if it looks like JSON
+                        parsed_llm_json_output = json.loads(json_to_parse)
+                        llm_textual_thought = parsed_llm_json_output.get("thought", llm_textual_thought) # Keep original thought if "thought" key not in JSON
+                        actions_list = parsed_llm_json_output.get("tool_calls", parsed_llm_json_output.get("actions", []))
 
-                    if isinstance(actions_list, list):
-                        for action_data in actions_list:
-                            tool_name = action_data.get("name") or action_data.get("tool")
-                            tool_args_dict = action_data.get("arguments")
-                            if tool_args_dict is None and tool_name:
-                                tool_args_dict = {k:v for k,v in action_data.items() if k not in ["tool", "name"]}
-                            
-                            if tool_name and tool_name in self.available_tools.tool_map:
-                                tool_call_id = f"json_content_call_{uuid.uuid4().hex[:8]}"
-                                parsed_tool_calls_from_content.append(
-                                    ToolCall(id=tool_call_id, type="function",
-                                             function=Function(name=tool_name, arguments=json.dumps(tool_args_dict or {})))
-                                )
-                            elif tool_name: logger.warning(f"LLM JSON thought specified unknown/unavailable tool: {tool_name}")
-                except json.JSONDecodeError: logger.warning(f"Could not parse JSON actions from LLM thought content (JSONDecodeError). Thought: {llm_textual_thought[:250]}")
-                except Exception as e_parse: logger.warning(f"Error attempting to parse actions from LLM thought content: {e_parse}. Thought: {llm_textual_thought[:250]}")
+                        if isinstance(actions_list, list):
+                            for action_data in actions_list:
+                                tool_name = action_data.get("name") or action_data.get("tool")
+                                
+                                # MODIFICATION START: Workaround for incorrect tool name
+                                if tool_name == "default_api.browser_use":
+                                    logger.warning(f"LLM JSON thought specified 'default_api.browser_use', correcting to '{BrowserUseTool().name}'.")
+                                    tool_name = BrowserUseTool().name
+                                # MODIFICATION END
 
-            # ** MODIFICATION START **
+                                tool_args_dict = action_data.get("arguments")
+                                if tool_args_dict is None and tool_name: # If arguments is not a key, assume other keys are args
+                                    tool_args_dict = {k:v for k,v in action_data.items() if k not in ["tool", "name"]}
+
+                                if tool_name and tool_name in self.available_tools.tool_map:
+                                    tool_call_id = f"json_content_call_{uuid.uuid4().hex[:8]}"
+                                    parsed_tool_calls_from_content.append(
+                                        ToolCall(id=tool_call_id, type="function",
+                                                 function=Function(name=tool_name, arguments=json.dumps(tool_args_dict or {})))
+                                    )
+                                elif tool_name:
+                                    logger.warning(f"LLM JSON thought specified unknown/unavailable tool: {tool_name}")
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not parse JSON actions from LLM thought content (JSONDecodeError). Thought: {llm_textual_thought[:250]}")
+                except Exception as e_parse:
+                    logger.warning(f"Error attempting to parse actions from LLM thought content: {e_parse}. Thought: {llm_textual_thought[:250]}")
+
+
             final_tool_calls_for_memory: Optional[List[ToolCall]] = None
             if direct_tool_calls:
                 final_tool_calls_for_memory = direct_tool_calls
-                self.current_tool_calls_internal = direct_tool_calls # For act() method
+                self.current_tool_calls_internal = direct_tool_calls
                 logger.info(f"Agent '{self.name}' using DIRECT tool calls from LLM.")
             elif parsed_tool_calls_from_content:
                 final_tool_calls_for_memory = parsed_tool_calls_from_content
-                self.current_tool_calls_internal = parsed_tool_calls_from_content # For act() method
+                self.current_tool_calls_internal = parsed_tool_calls_from_content
                 logger.info(f"Agent '{self.name}' using PARSED tool calls from LLM thought content.")
             else:
-                self.current_tool_calls_internal = [] # For act() method
-            
+                self.current_tool_calls_internal = []
+
             assistant_message_to_memory = Message(
                 role=Role.ASSISTANT,
                 content=llm_textual_thought if llm_textual_thought and llm_textual_thought.strip() else None,
                 tool_calls=final_tool_calls_for_memory
             )
             self.memory.add_message(assistant_message_to_memory)
-            # ** MODIFICATION END **
+
 
             logger.info(f"Agent '{self.name}' (processed) thoughts: {llm_textual_thought if llm_textual_thought else 'No textual thought.'}")
-            if self.current_tool_calls_internal: # Check the instance variable for logging and return decision
+            if self.current_tool_calls_internal:
                 logger.info(f"Agent '{self.name}' (final selection) has {len(self.current_tool_calls_internal)} tool(s) to execute: {[call.function.name for call in self.current_tool_calls_internal]}")
                 for tc in self.current_tool_calls_internal: logger.debug(f"Tool: {tc.function.name}, Args: {tc.function.arguments}")
             else: logger.info(f"Agent '{self.name}' (final selection) selected no tools for this turn.")
-            
+
             if self.tool_choices == ToolChoice.NONE and self.current_tool_calls_internal:
                 logger.warning(f"Agent '{self.name}' LLM tried to use tools when tool_choice was 'none'. Ignoring calls."); self.current_tool_calls_internal = []; return bool(llm_textual_thought.strip())
 
@@ -171,13 +187,14 @@ class ToolCallAgent(ReActAgent):
 
         results_summary: List[str] = []
         for tool_call_command in self.current_tool_calls_internal:
-            self.current_base64_image_internal = None
+            self.current_base64_image_internal = None # Reset before each tool call
             tool_execution_result_str = await self.execute_tool(tool_call_command)
             if self.max_observe and isinstance(tool_execution_result_str, str): tool_execution_result_str = tool_execution_result_str[:self.max_observe]
             logger.info(f"Tool '{tool_call_command.function.name}' executed. Result snippet: {tool_execution_result_str[:100]}...")
+            # The image is associated with the TOOL message here
             tool_response_msg = Message.tool_message(content=tool_execution_result_str, tool_call_id=tool_call_command.id, name=tool_call_command.function.name, base64_image=self.current_base64_image_internal)
             self.memory.add_message(tool_response_msg); results_summary.append(tool_execution_result_str)
-            self.current_base64_image_internal = None
+            self.current_base64_image_internal = None # Clear after associating with message
             if self.state == AgentState.FINISHED: logger.info(f"Agent '{self.name}' processing halted by special tool '{tool_call_command.function.name}'."); break
         self.current_tool_calls_internal = []
         return "\n\n".join(results_summary) if results_summary else "No tool results."
@@ -190,25 +207,35 @@ class ToolCallAgent(ReActAgent):
             tool_input_args = json.loads(tool_args_json_str)
             logger.info(f"Agent '{self.name}' activating tool: '{tool_name}' with args: {tool_input_args}")
             tool_result_obj: Any = await self.available_tools.execute(name=tool_name, tool_input=tool_input_args)
+
+            # Handle special tools AND capture image from ANY tool result
             await self._handle_special_tool(name=tool_name, result=tool_result_obj)
-            if hasattr(tool_result_obj, "base64_image") and tool_result_obj.base64_image: self.current_base64_image_internal = tool_result_obj.base64_image
-            else: self.current_base64_image_internal = None
-            observation = str(tool_result_obj)
+            if hasattr(tool_result_obj, "base64_image") and tool_result_obj.base64_image:
+                self.current_base64_image_internal = tool_result_obj.base64_image # Store for tool_message
+                logger.info(f"Captured base64_image from tool '{tool_name}' result.")
+            else:
+                self.current_base64_image_internal = None
+
+            observation = str(tool_result_obj) # Convert ToolResult (or any result) to string
             observation_str = observation if observation is not None else "Tool executed with no textual output."
+            # Return the observation string, image is handled via self.current_base64_image_internal
             return f"Observed output of tool {tool_name}: \n{observation_str}" if observation_str.strip() else f"Tool {tool_name} completed with no significant output."
         except json.JSONDecodeError: error_msg = f"Error parsing arguments for tool {tool_name}: Invalid JSON. Args: {tool_args_json_str}"; logger.error(error_msg); return f"Error: {error_msg}"
         except ToolError as te: logger.error(f"Tool '{tool_name}' failed with ToolError: {te.message}"); return f"Error executing {tool_name}: {te.message}"
         except Exception as e: error_msg = f"Tool '{tool_name}' encountered an unexpected problem: {str(e)}"; logger.exception(error_msg); return f"Error: {error_msg}"
 
     async def _handle_special_tool(self, name: str, result: Any, **kwargs: Any):
-        if not self._is_special_tool(name): return
+        if not self._is_special_tool(name): return # Early exit if not special
+
         if name.lower() == Terminate().name.lower():
             if self._should_finish_execution(name=name, result=result, **kwargs):
                 logger.info(f"Special tool '{name}' indicates task completion. Agent '{self.name}' state set to FINISHED."); self.state = AgentState.FINISHED
+        # This part was for MCP, can be generalized if other tools return images this way
         if isinstance(result, ToolResult) and result.base64_image:
-            logger.info(f"Tool '{name}' returned an image. It has been associated with the tool's response message.")
+            logger.info(f"Tool '{name}' returned an image. It will be associated with the tool's response message.")
+            # self.current_base64_image_internal is set in execute_tool and used by act() when creating the tool_message
 
-    def _should_finish_execution(self, name:str, result: Any, **kwargs: Any) -> bool: 
+    def _should_finish_execution(self, name:str, result: Any, **kwargs: Any) -> bool:
         if name.lower() == Terminate().name.lower(): return True
         return False
 
