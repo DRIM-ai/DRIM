@@ -18,7 +18,7 @@ from app.config import config as app_config
 from app.llm import LLM, ModelPurpose
 from app.tool.base import BaseTool, ToolResult, ToolFailure
 from app.tool.web_search import WebSearch, WebSearchResponse
-from app.schema import ToolChoice, Message, Role 
+from app.schema import ToolChoice, Message, Role
 from app.logger import logger
 
 _BROWSER_TOOL_DESCRIPTION = """\
@@ -78,7 +78,7 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
     browser_context: Optional[BrowserContext] = Field(default=None, exclude=True)
 
     web_search_dependency: WebSearch = Field(default_factory=WebSearch, exclude=True)
-    llm_instance: LLM = Field(default_factory=LLM) 
+    llm_instance: LLM = Field(default_factory=LLM)
 
     tool_context: Optional[ContextT] = Field(default=None, exclude=True)
 
@@ -90,31 +90,31 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
         return v
 
     async def _ensure_browser_initialized(self) -> BrowserContext:
-        async with self.async_lock: 
+        async with self.async_lock:
             if self.browser_instance is None or self.browser_context is None:
                 logger.info(f"BrowserUseTool: Browser init needed (browser instance is None: {self.browser_instance is None}, context is None: {self.browser_context is None}). Initializing...")
-                
+
                 if self.browser_context is not None:
-                    try: 
+                    try:
                         await self.browser_context.close()
                         logger.info("BrowserUseTool: Cleaned up existing browser_context before re-init.")
-                    except Exception as e_ctx_close: 
+                    except Exception as e_ctx_close:
                         logger.warning(f"Error closing existing browser_context during re-init: {e_ctx_close}")
                     finally:
                         self.browser_context = None
-                
+
                 if self.browser_instance is not None:
-                    try: 
+                    try:
                         await self.browser_instance.close()
                         logger.info("BrowserUseTool: Cleaned up existing browser_instance before re-init.")
-                    except Exception as e_b_close: 
+                    except Exception as e_b_close:
                         logger.warning(f"Error closing existing browser_instance during re-init: {e_b_close}")
                     finally:
                         self.browser_instance = None
-                
+
                 browser_config_kwargs: Dict[str, Any] = {
-                    "headless": True, 
-                    "disable_security": True 
+                    "headless": True,
+                    "disable_security": True
                 }
                 if app_config.browser:
                     from browser_use.browser.browser import ProxySettings as BrowserUseProxySettings
@@ -123,22 +123,22 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                     browser_config_kwargs["disable_security"] = browser_settings.disable_security
                     if browser_settings.extra_chromium_args:
                         browser_config_kwargs["extra_chromium_args"] = browser_settings.extra_chromium_args
-                    if browser_settings.chrome_instance_path: 
+                    if browser_settings.chrome_instance_path:
                         browser_config_kwargs["executable_path"] = browser_settings.chrome_instance_path
-                    if browser_settings.wss_url: 
+                    if browser_settings.wss_url:
                         browser_config_kwargs["ws_endpoint_url"] = browser_settings.wss_url
-                    
+
                     if browser_settings.proxy and browser_settings.proxy.server:
                         proxy_data = {"server": browser_settings.proxy.server}
                         if browser_settings.proxy.username: proxy_data["username"] = browser_settings.proxy.username
                         if browser_settings.proxy.password: proxy_data["password"] = browser_settings.proxy.password
                         browser_config_kwargs["proxy"] = BrowserUseProxySettings(**proxy_data)
-                
+
                 try:
                     self.browser_instance = BrowserUseBrowser(BrowserConfig(**browser_config_kwargs))
                     logger.info("BrowserUseTool: BrowserUseBrowser instance created.")
-                    
-                    context_config = BrowserContextConfig() 
+
+                    context_config = BrowserContextConfig()
                     self.browser_context = await self.browser_instance.new_context(context_config)
                     logger.info("BrowserUseTool: BrowserContext created.")
                 except Exception as e_init:
@@ -146,10 +146,10 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                     if self.browser_instance:
                         try: await self.browser_instance.close()
                         except Exception: pass
-                    self.browser_instance = None 
+                    self.browser_instance = None
                     self.browser_context = None
                     raise ToolFailure(error=f"Failed to initialize browser: {e_init}")
-            
+
             if self.browser_context is None:
                 logger.error("BrowserUseTool: browser_context is None after initialization logic.")
                 raise ToolFailure(error="Browser context could not be established.")
@@ -159,8 +159,8 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                 if not current_page or (hasattr(current_page, 'is_closed') and current_page.is_closed()):
                     logger.info("BrowserUseTool: No current page or page is closed. Creating new page.")
                     await self.browser_context.create_new_page_if_needed()
-                    current_page = await self.browser_context.get_current_page() 
-                    if not current_page: 
+                    current_page = await self.browser_context.get_current_page()
+                    if not current_page:
                         raise ToolFailure(error="Failed to obtain a valid page in the browser context.")
             except Exception as e_page_ops:
                 logger.error(f"BrowserUseTool: Error during page management in _ensure_browser_initialized: {e_page_ops}")
@@ -172,21 +172,21 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
         self,
         action: str,
         url: Optional[str] = None,
-        index: Optional[Any] = None, 
+        index: Optional[Any] = None,
         text: Optional[str] = None,
-        scroll_amount: Optional[Any] = None, 
-        tab_id: Optional[Any] = None, 
+        scroll_amount: Optional[Any] = None,
+        tab_id: Optional[Any] = None,
         query: Optional[str] = None,
-        num_results: Optional[Any] = None, 
+        num_results: Optional[Any] = None,
         goal: Optional[str] = None,
         keys: Optional[str] = None,
-        seconds: Optional[Any] = None, 
+        seconds: Optional[Any] = None,
         **kwargs: Any,
     ) -> ToolResult:
         try:
             context = await self._ensure_browser_initialized()
             page = await context.get_current_page()
-            if not page: 
+            if not page:
                  logger.error("BrowserUseTool.execute: Critical - No page available after ensuring browser initialization.")
                  return ToolFailure(error="Failed to get a valid browser page for action.")
             if hasattr(page, 'is_closed') and page.is_closed():
@@ -202,19 +202,19 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
             if index is not None: index = int(float(index))
             if scroll_amount is not None: scroll_amount = int(float(scroll_amount))
             if tab_id is not None: tab_id = int(float(tab_id))
-            
-            if num_results is not None: 
+
+            if num_results is not None:
                 num_results_int = int(float(num_results))
-                if num_results_int <=0: num_results_int = 5 
-            else: 
-                num_results_int = 5 
+                if num_results_int <=0: num_results_int = 5
+            else:
+                num_results_int = 5
 
             if seconds is not None: seconds = int(float(seconds))
 
             if action == "go_to_url":
                 if not url: return ToolFailure(error="URL is required for 'go_to_url' action")
-                await page.goto(url) 
-                await page.wait_for_load_state() 
+                await page.goto(url)
+                await page.wait_for_load_state()
                 return ToolResult(output=f"Navigated to {url}")
 
             elif action == "go_back":
@@ -225,43 +225,71 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                 return ToolResult(output="Refreshed current page")
             elif action == "click_element":
                 if index is None: return ToolFailure(error="Index is required for 'click_element' action")
-                element_node = await context.get_dom_element_by_index(index) 
-                if not element_node: return ToolFailure(error=f"Element with index {index} not found")
-                download_path = await context._click_element_node(element_node) 
-                output_str_click = f"Clicked element at index {index}"
-                if download_path: output_str_click += f" - Downloaded file to {download_path}"
-                return ToolResult(output=output_str_click)
+                try:
+                    element_node = await context.get_dom_element_by_index(index)
+                    if not element_node: return ToolFailure(error=f"Element with index {index} not found by the browser library, though it might have been listed.")
+                    download_path = await context._click_element_node(element_node)
+                    output_str_click = f"Clicked element at index {index}"
+                    if download_path: output_str_click += f" - Downloaded file to {download_path}"
+                    return ToolResult(output=output_str_click)
+                except KeyError as e:
+                    logger.error(f"BrowserUseTool: KeyError when trying to get element with index {index}. This means the index was not in the browser's internal map. Error: {e}")
+                    try:
+                        current_state_for_error = await self.get_current_state(context=context)
+                        error_output = f"Failed to click element: Index {index} is invalid or not found in the current page's interactive elements. Review the current page state carefully. {current_state_for_error.output}"
+                        return ToolFailure(error=f"Invalid element index: {index}. It was not found in the browser's internal map.", output=error_output, base64_image=current_state_for_error.base64_image)
+                    except Exception as e_state:
+                        logger.error(f"BrowserUseTool: Could not get current state during KeyError handling: {e_state}")
+                        return ToolFailure(error=f"Invalid element index: {index}. It was not found in the browser's internal map. Additionally, failed to get current page state.")
+                except Exception as e_click: # Catch other potential errors from _click_element_node
+                    logger.error(f"BrowserUseTool: Error clicking element at index {index}: {e_click}")
+                    return ToolFailure(error=f"Error clicking element at index {index}: {str(e_click)}")
+
             elif action == "input_text":
                 if index is None or text is None: return ToolFailure(error="Index and text are required for 'input_text' action")
-                element_node = await context.get_dom_element_by_index(index) 
-                if not element_node: return ToolFailure(error=f"Element with index {index} not found")
-                await context._input_text_element_node(element_node, text) 
-                return ToolResult(output=f"Input '{text}' into element at index {index}")
+                try:
+                    element_node = await context.get_dom_element_by_index(index)
+                    if not element_node: return ToolFailure(error=f"Element with index {index} not found by the browser library, though it might have been listed.")
+                    await context._input_text_element_node(element_node, text)
+                    return ToolResult(output=f"Input '{text}' into element at index {index}")
+                except KeyError as e:
+                    logger.error(f"BrowserUseTool: KeyError when trying to get element with index {index} for input. Error: {e}")
+                    try:
+                        current_state_for_error = await self.get_current_state(context=context)
+                        error_output = f"Failed to input into element: Index {index} is invalid or not found in the current page's interactive elements. Review the current page state carefully. {current_state_for_error.output}"
+                        return ToolFailure(error=f"Invalid element index: {index} for input. It was not found in the browser's internal map.", output=error_output, base64_image=current_state_for_error.base64_image)
+                    except Exception as e_state:
+                        logger.error(f"BrowserUseTool: Could not get current state during KeyError handling for input: {e_state}")
+                        return ToolFailure(error=f"Invalid element index: {index} for input. It was not found in the browser's internal map. Additionally, failed to get current page state.")
+                except Exception as e_input: # Catch other potential errors
+                    logger.error(f"BrowserUseTool: Error inputting text into element at index {index}: {e_input}")
+                    return ToolFailure(error=f"Error inputting text into element at index {index}: {str(e_input)}")
+
             elif action == "scroll_down" or action == "scroll_up":
                 direction = 1 if action == "scroll_down" else -1
                 default_scroll = context.config.browser_window_size["height"] if context.config and hasattr(context.config, "browser_window_size") and context.config.browser_window_size else 500
                 amount = scroll_amount if scroll_amount is not None else default_scroll
-                await context.execute_javascript(f"window.scrollBy(0, {direction * amount});") 
+                await context.execute_javascript(f"window.scrollBy(0, {direction * amount});")
                 return ToolResult(output=f"Scrolled {'down' if direction > 0 else 'up'} by {amount} pixels")
             elif action == "scroll_to_text":
                 if not text: return ToolFailure(error="Text is required for 'scroll_to_text' action")
                 try:
-                    locator = page.get_by_text(text, exact=False) 
-                    await locator.scroll_into_view_if_needed(timeout=5000) 
+                    locator = page.get_by_text(text, exact=False)
+                    await locator.scroll_into_view_if_needed(timeout=5000)
                     return ToolResult(output=f"Scrolled to text: '{text}'")
-                except Exception as e_scroll: 
+                except Exception as e_scroll:
                     logger.warning(f"BrowserUseTool: Failed to scroll to text '{text}': {e_scroll}")
                     return ToolFailure(error=f"Failed to scroll to text '{text}': Timeout or element not found.")
             elif action == "send_keys":
                 if not keys: return ToolFailure(error="Keys are required for 'send_keys' action")
-                await page.keyboard.press(keys) 
+                await page.keyboard.press(keys)
                 return ToolResult(output=f"Sent keys: {keys}")
-            
+
             elif action == "web_search":
                 if not query: return ToolFailure(error="Query is required for 'web_search' action")
                 logger.info(f"BrowserUseTool.web_search: Calling WebSearch dependency with query='{query}', num_results={num_results_int}")
                 search_response_obj: WebSearchResponse = await self.web_search_dependency.execute(
-                    query=query, num_results=num_results_int, fetch_content=False 
+                    query=query, num_results=num_results_int, fetch_content=False
                 )
                 return search_response_obj
 
@@ -275,17 +303,17 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                 selectors_to_try = ["article", "main", "div[role='main']", "body"]
                 for selector in selectors_to_try:
                     try:
-                        locator = page.locator(selector).first 
-                        if await locator.count() > 0: 
-                            page_content_html = await locator.inner_html(timeout=10000) 
+                        locator = page.locator(selector).first
+                        if await locator.count() > 0:
+                            page_content_html = await locator.inner_html(timeout=10000)
                             logger.info(f"BrowserUseTool: Found focused content using selector '{selector}' for extraction.")
                             break
                     except Exception as e_locator:
                         logger.debug(f"BrowserUseTool: Selector '{selector}' not found or error: {e_locator}")
-                
+
                 if not page_content_html:
                     logger.info("BrowserUseTool: No common focused selector found, using full page.content() for extraction.")
-                    page_content_html = await page.content(timeout=15000) 
+                    page_content_html = await page.content(timeout=15000)
 
                 content_markdown = markdownify.markdownify(page_content_html)
                 truncated_markdown = content_markdown[:max_content_length]
@@ -299,11 +327,11 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                         "type": "object",
                         "properties": {
                             "goal_achieved": {
-                                "type": "boolean", 
+                                "type": "boolean",
                                 "description": "True if the extraction goal was met and relevant information was found. False if the goal could not be met from the provided content (e.g., information not present)."
                             },
                             "extracted_text_summary": {
-                                "type": "string", 
+                                "type": "string",
                                 "description": "Use for single text extractions or a concise summary if the goal was general or did not imply a list. Include this if relevant, even if list items are also extracted."
                             },
                             "extracted_list_items": {
@@ -316,18 +344,18 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                                         "item_detail": {"type": "string", "description": "Supporting detail for the item (e.g., snippet, timestamp, price, short description)."},
                                         "item_url": {"type": "string", "description": "Associated URL if the item is a link."}
                                     },
-                                    # "additionalProperties": {"type": "string"}, # REMOVED THIS LINE
+                                    # "additionalProperties": {"type": "string"}, # Ensure this remains commented or handled if re-enabled
                                     "required": ["item_title"]
                                 }
                             },
                             "reasoning_notes": {
-                                "type": "string", 
+                                "type": "string",
                                 "description": "Briefly explain if goal_achieved is false, or provide any important context/notes about the extraction process or limitations of the extracted data."}
-                        }, 
+                        },
                         "required": ["goal_achieved"]
                     }
                 }]
-                
+
                 extraction_prompt_text = (
                     f"You are an information extraction specialist. Your task is to meticulously analyze the provided webpage content (in Markdown format) "
                     f"and extract information to fulfill the specific extraction goal: '{goal}'.\n"
@@ -349,7 +377,7 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                     messages=[Message(role=Role.USER, content=extraction_prompt_text)],
                     tools=extraction_tool_schema,
                     tool_choice={"type": "function", "function": {"name": "format_extracted_web_data"}},
-                    model_purpose="general" 
+                    model_purpose="general"
                 )
 
                 if llm_response_message and llm_response_message.tool_calls:
@@ -357,42 +385,42 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                     if tool_call.function.name == "format_extracted_web_data":
                         try:
                             args = json.loads(tool_call.function.arguments or "{}")
-                            args["source_url_of_extraction"] = page.url 
-                            
+                            args["source_url_of_extraction"] = page.url
+
                             output_dict_for_agent = {"goal": goal, **args}
                             output_json_str = json.dumps(output_dict_for_agent, indent=2)
 
-                            if args.get("goal_achieved") is False: 
+                            if args.get("goal_achieved") is False:
                                 error_msg = f"Extraction goal not achieved by LLM. Reasoning: {args.get('reasoning_notes', 'N/A')}"
                                 logger.warning(f"BrowserUseTool: {error_msg} for goal '{goal}'")
-                                return ToolResult(output=output_json_str, error=error_msg) 
+                                return ToolResult(output=output_json_str, error=error_msg)
 
                             logger.info(f"BrowserUseTool: Extraction for '{goal}'. Goal Achieved: {args.get('goal_achieved')}. List items: {len(args.get('extracted_list_items',[]))}. Text summary present: {bool(args.get('extracted_text_summary'))}.")
-                            return ToolResult(output=output_json_str) 
+                            return ToolResult(output=output_json_str)
                         except json.JSONDecodeError as e_json:
                             logger.error(f"BrowserUseTool: Failed to parse JSON from format_extracted_web_data arguments: {tool_call.function.arguments}, Error: {e_json}")
                             return ToolFailure(error=f"Internal error parsing extraction results: {e_json}")
-                
+
                 logger.warning(f"Content extraction for goal '{goal}' did not use 'format_extracted_web_data' tool as expected.")
                 return ToolFailure(
                     error=f"Extraction LLM for goal '{goal}' failed to use the required formatting tool.",
                     output=f"Raw content (first {min(500, max_content_length)} chars of focused/full markdown): {truncated_markdown[:500]}..."
                 )
-            
+
             elif action == "switch_tab":
                 if tab_id is None: return ToolFailure(error="Tab ID is required for 'switch_tab' action")
-                await context.switch_to_tab(tab_id) 
-                new_page = await context.get_current_page() 
-                if new_page: await new_page.wait_for_load_state() 
+                await context.switch_to_tab(tab_id)
+                new_page = await context.get_current_page()
+                if new_page: await new_page.wait_for_load_state()
                 return ToolResult(output=f"Switched to tab {tab_id}")
 
             elif action == "open_tab":
                 if not url: return ToolFailure(error="URL is required for 'open_tab' action")
-                await context.create_new_tab(url) 
+                await context.create_new_tab(url)
                 return ToolResult(output=f"Opened new tab with {url}")
 
             elif action == "close_tab":
-                closed_tab_id = await context.close_current_tab() 
+                closed_tab_id = await context.close_current_tab()
                 return ToolResult(output=f"Closed current tab (ID was {closed_tab_id if closed_tab_id else 'N/A'}). New current page might be active.")
 
             elif action == "wait":
@@ -406,9 +434,9 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
             else:
                 return ToolFailure(error=f"Unknown browser action: {action}")
 
-        except ToolFailure as tf: 
+        except ToolFailure as tf:
             logger.error(f"BrowserUseTool action '{action}' resulted in ToolFailure: {tf.error_message}")
-            return tf 
+            return tf
         except Exception as e:
             logger.exception(f"BrowserUseTool action '{action}' failed unexpectedly.")
             return ToolFailure(error=f"Browser action '{action}' failed with unexpected error: {str(e)}")
@@ -416,51 +444,51 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
     async def get_current_state(self, context: Optional[BrowserContext] = None) -> ToolResult:
         try:
             ctx_to_use = context
-            if not ctx_to_use: 
+            if not ctx_to_use:
                 logger.warning("BrowserUseTool.get_current_state: Context was None. Attempting to ensure initialization.")
-                ctx_to_use = await self._ensure_browser_initialized() 
-            
-            if not ctx_to_use: 
+                ctx_to_use = await self._ensure_browser_initialized()
+
+            if not ctx_to_use:
                 return ToolFailure(error="Browser context could not be initialized for get_current_state.")
 
             page = await ctx_to_use.get_current_page()
-            if not page : 
+            if not page :
                  logger.warning("BrowserUseTool.get_current_state: Page was None. Attempting to create a new page.")
                  await ctx_to_use.create_new_page_if_needed()
                  page = await ctx_to_use.get_current_page()
                  if not page:
                      return ToolFailure(error="No active page in browser context for get_current_state after attempting to create one.")
-            
+
             if hasattr(page, 'is_closed') and page.is_closed():
                  logger.warning("BrowserUseTool.get_current_state: Page is closed. Attempting to create a new page.")
                  await ctx_to_use.create_new_page_if_needed()
                  page = await ctx_to_use.get_current_page()
-                 if not page or page.is_closed(): 
+                 if not page or page.is_closed():
                      return ToolFailure(error="Page remains closed or invalid after attempting to create a new one.")
 
-            await page.bring_to_front() 
-            await page.wait_for_load_state(timeout=10000) 
+            await page.bring_to_front()
+            await page.wait_for_load_state(timeout=10000)
 
-            state_data = None 
+            state_data = None
             screenshot_base64 = None
             try:
                 async def _get_page_state(): return await ctx_to_use.get_state()
-                async def _get_screenshot(): 
+                async def _get_screenshot():
                     return base64.b64encode(await page.screenshot(full_page=False, type="jpeg", quality=75, timeout=10000)).decode("utf-8")
 
                 results = await asyncio.gather(
                     _get_page_state(),
                     _get_screenshot(),
-                    return_exceptions=True 
+                    return_exceptions=True
                 )
                 if isinstance(results[0], Exception):
                     logger.error(f"BrowserUseTool: Error calling ctx_to_use.get_state(): {results[0]}")
-                    raise results[0] 
+                    raise results[0]
                 state_data = results[0]
 
                 if isinstance(results[1], Exception):
                     logger.warning(f"BrowserUseTool: Error taking screenshot: {results[1]}")
-                    screenshot_base64 = None 
+                    screenshot_base64 = None
                 else:
                     screenshot_base64 = results[1]
 
@@ -468,10 +496,10 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                 logger.error(f"BrowserUseTool: Error during get_state or screenshot: {e_get_state_or_ss}. Returning partial state.")
                 page_url, page_title = "ErrorFetchingURL", "ErrorFetchingTitle"
                 try:
-                    if page and not (hasattr(page, 'is_closed') and page.is_closed()): 
+                    if page and not (hasattr(page, 'is_closed') and page.is_closed()):
                         page_url = page.url or "N/A"; page_title = await page.title() or "N/A"
                 except Exception: pass
-                
+
                 error_state_dict = {
                     "url": page_url, "title": page_title, "tabs": [], "current_tab_id": None,
                     "help_text": "[index] denotes interactive element ID. Use these IDs for actions.",
@@ -481,7 +509,7 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                 }
                 if screenshot_base64 is None:
                     try:
-                        if page and not (hasattr(page, 'is_closed') and page.is_closed()): 
+                        if page and not (hasattr(page, 'is_closed') and page.is_closed()):
                             ss_bytes = await page.screenshot(full_page=False, type="jpeg", quality=75, timeout=5000)
                             screenshot_base64 = base64.b64encode(ss_bytes).decode("utf-8")
                     except Exception as e_ss_fallback:
@@ -496,20 +524,20 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
             pixels_above = getattr(state_data, 'pixels_above', 0)
             pixels_below = getattr(state_data, 'pixels_below', 0)
             scroll_info_dict = {
-                "pixels_above": pixels_above, "pixels_below": pixels_below, 
+                "pixels_above": pixels_above, "pixels_below": pixels_below,
                 "total_height": pixels_above + pixels_below + viewport_height
             }
 
             state_info_dict = {
-                "url": getattr(state_data, 'url', 'N/A'), "title": getattr(state_data, 'title', 'N/A'), 
-                "tabs": [tab.model_dump() for tab in getattr(state_data, 'tabs', []) if hasattr(tab, 'model_dump')], 
-                "current_tab_id": getattr(state_data, 'current_tab_id', None), 
+                "url": getattr(state_data, 'url', 'N/A'), "title": getattr(state_data, 'title', 'N/A'),
+                "tabs": [tab.model_dump() for tab in getattr(state_data, 'tabs', []) if hasattr(tab, 'model_dump')],
+                "current_tab_id": getattr(state_data, 'current_tab_id', None),
                 "help_text": "[index] denotes interactive element ID. Use these IDs for actions like click or input.",
                 "interactive_elements": state_data.element_tree.clickable_elements_to_string() if hasattr(state_data, 'element_tree') and state_data.element_tree else "No interactive elements information available.",
                 "scroll_info": scroll_info_dict, "viewport_height": viewport_height,
             }
-            if hasattr(state_data, "error_message") and state_data.error_message: 
-                state_info_dict["page_error"] = state_data.error_message 
+            if hasattr(state_data, "error_message") and state_data.error_message:
+                state_info_dict["page_error"] = state_data.error_message
 
             return ToolResult(output=json.dumps(state_info_dict, indent=2), base64_image=screenshot_base64)
         except Exception as e:
@@ -533,7 +561,7 @@ class BrowserUseTool(BaseTool, Generic[ContextT]):
                 try:
                     await self.browser_instance.close()
                     logger.info("BrowserUseTool: Browser closed.")
-                except Exception as e: 
+                except Exception as e:
                     logger.error(f"BrowserUseTool: Error closing browser: {e}")
                 finally:
                     self.browser_instance = None
